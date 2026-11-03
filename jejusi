@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 축구 대진표 & 순위표 v5.0</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- MQTT.js: shared real-time synchronization -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background-color: #f8fafc;
+        }
+        .table-container::-webkit-scrollbar {
+            height: 6px;
+        }
+        .table-container::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen pb-16">
+
+    <!-- Header -->
+    <header class="bg-emerald-700 text-white shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
+            <div class="flex flex-col sm:flex-row justify-between items-center gap-3">
+                <div class="flex items-center space-x-3">
+                    <div class="bg-emerald-600 p-2.5 rounded-xl border border-emerald-500 shadow-inner">
+                        <i class="fa-solid fa-trophy text-2xl text-amber-300"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl sm:text-2xl font-extrabold tracking-tight">대회 실시간 대진표 및 순위</h1>
+                        <p class="text-xs text-emerald-100">날짜·시간 · HOME/AWAY · 실시간 공동입력 · 승점 순위</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap justify-center sm:justify-end">
+                    <div id="syncStatus" class="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-emerald-800 border border-emerald-600 text-[11px] font-semibold text-emerald-100" title="실시간 공동입력 연결 상태">
+                        <span id="syncDot" class="w-2 h-2 rounded-full bg-amber-300"></span>
+                        <span id="syncText">실시간 연결 중</span>
+                    </div>
+                    <span class="inline-flex items-center px-2.5 py-2 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-[11px] font-black text-emerald-100" title="앱/데이터 스키마 버전">v5.0</span>
+                    <button id="resetDataBtn" onclick="resetData()" class="bg-emerald-800 hover:bg-emerald-900 text-xs text-emerald-100 font-semibold py-2 px-3 rounded-lg transition border border-emerald-600 flex items-center gap-1.5 shadow-sm">
+                        <i class="fa-solid fa-rotate-right"></i> 데이터 초기화
+                    </button>
+                    <button id="exportDataBtn" onclick="exportData()" class="bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-xs py-2 px-3.5 rounded-lg transition flex items-center gap-1.5 shadow-md">
+                        <i class="fa-solid fa-share-nodes"></i> 결과 복사 & 공유
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Category Navigation Tabs -->
+        <div class="bg-emerald-800/90 backdrop-blur border-t border-emerald-600/50">
+            <div class="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 flex overflow-x-auto space-x-1 py-2 text-sm font-medium no-scrollbar">
+                <button onclick="switchCategory('elem_m')" id="tab-elem_m" class="category-tab px-4 py-2 rounded-lg text-emerald-100 hover:bg-emerald-700/60 transition whitespace-nowrap flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-blue-400"></span>
+                    남초부 (3팀)
+                </button>
+                <button onclick="switchCategory('elem_w')" id="tab-elem_w" class="category-tab px-4 py-2 rounded-lg text-emerald-100 hover:bg-emerald-700/60 transition whitespace-nowrap flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-pink-400"></span>
+                    여초부 (2팀 · 결승)
+                </button>
+                <button onclick="switchCategory('mid_m')" id="tab-mid_m" class="category-tab px-4 py-2 rounded-lg text-emerald-100 hover:bg-emerald-700/60 transition whitespace-nowrap flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-indigo-400"></span>
+                    남중부 (14팀 · 4개조+4강)
+                </button>
+                <button onclick="switchCategory('mid_w')" id="tab-mid_w" class="category-tab px-4 py-2 rounded-lg text-emerald-100 hover:bg-emerald-700/60 transition whitespace-nowrap flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-rose-400"></span>
+                    여중부 (7팀 · 2개조+결승)
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+
+        <!-- Category Banner Info -->
+        <div id="categoryHeader" class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200/80 mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+                <div class="flex items-center gap-2 mb-1">
+                    <span id="categoryBadge" class="inline-block px-3 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">남초부</span>
+                    <span id="categoryRuleNotice" class="text-xs bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full font-medium">풀리그 방식</span>
+                </div>
+                <h2 id="categoryTitle" class="text-2xl font-bold text-slate-800">남자 초등학교 리그 경기</h2>
+                <p id="categoryDesc" class="text-sm text-slate-500 mt-1">총 3팀 참여 | 3경기 (풀리그)</p>
+            </div>
+            
+            <div class="flex items-center gap-2 self-stretch sm:self-auto">
+                <button onclick="openTeamModal()" class="flex-1 sm:flex-initial bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 border border-slate-300 shadow-sm">
+                    <i class="fa-solid fa-pen-to-square"></i> 팀 이름 수정하기
+                </button>
+            </div>
+        </div>
+
+        <!-- Rules Info Banner -->
+        <div class="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 mb-6 text-xs text-amber-900 flex flex-col md:flex-row md:items-center justify-between gap-2">
+            <div class="flex items-start gap-2">
+                <i class="fa-solid fa-circle-info text-amber-600 text-base mt-0.5"></i>
+                <div>
+                    <span class="font-bold text-amber-950">리그 순위 결정 우선순위 규정:</span>
+                    <span class="ml-1 text-amber-800">① 승점 (승3, 무1, 패0) ➜ ② 득실차 ➜ ③ 다득점 ➜ ④ 승자승 (맞대결 결과) ➜ ⑤ 동률 시 추첨</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Dynamic View Container -->
+        <div id="mainViewContainer" class="space-y-8">
+            <!-- Dynamic Rendered Content (Standings + Matches / Tournament) -->
+        </div>
+
+    </main>
+
+    <!-- Modal: Edit Team Names -->
+    <div id="teamModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden transform transition-all">
+            <div class="p-5 bg-slate-800 text-white flex justify-between items-center">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i class="fa-solid fa-users-gear text-emerald-400"></i> 참가 팀 이름 설정
+                </h3>
+                <button onclick="closeTeamModal()" class="text-slate-400 hover:text-white transition">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+            <div class="p-5 max-h-[60vh] overflow-y-auto space-y-4" id="teamInputsContainer">
+                <!-- Inputs injected dynamically -->
+            </div>
+            <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                <button onclick="closeTeamModal()" class="px-4 py-2 rounded-xl text-slate-600 text-sm font-semibold hover:bg-slate-200 transition">취소</button>
+                <button onclick="saveTeamNames()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold transition shadow-md">저장하기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert / Toast Modal -->
+    <div id="toast" class="fixed bottom-6 right-6 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-3 transform translate-y-20 opacity-0 transition-all duration-300">
+        <i class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>
+        <span id="toastMsg" class="text-sm font-medium">메시지 내용</span>
+    </div>
+
+    <script>
+        // Category Standard Configuration
+        const categoryConfigs = {
+            elem_m: {
+                name: "남자 초등학교",
+                badge: "남초부",
+                badgeColor: "bg-blue-100 text-blue-700",
+                type: "single_league",
+                teams: ["해돌초", "꿈나무초", "새싹초"]
+            },
+            elem_w: {
+                name: "여자 초등학교",
+                badge: "여초부",
+                badgeColor: "bg-pink-100 text-pink-700",
+                type: "final_only",
+                teams: ["미래초", "한별초"]
+            },
+            mid_m: {
+                name: "남자 중학교",
+                badge: "남중부",
+                badgeColor: "bg-indigo-100 text-indigo-700",
+                type: "groups_with_semis",
+                groups: [
+                    { name: "A조", count: 4, teams: ["남중 1", "남중 2", "남중 3", "남중 4"], matchesType: "4teams" },
+                    { name: "B조", count: 4, teams: ["남중 5", "남중 6", "남중 7", "남중 8"], matchesType: "4teams" },
+                    { name: "C조", count: 3, teams: ["남중 9", "남중 10", "남중 11"], matchesType: "3teams" },
+                    { name: "D조", count: 3, teams: ["남중 12", "남중 13", "남중 14"], matchesType: "3teams" }
+                ]
+            },
+            mid_w: {
+                name: "여자 중학교",
+                badge: "여중부",
+                badgeColor: "bg-rose-100 text-rose-700",
+                type: "groups_with_final",
+                groups: [
+                    { name: "A조", count: 4, teams: ["여중 A1", "여중 A2", "여중 A3", "여중 A4"], matchesType: "4teams" },
+                    { name: "B조", count: 3, teams: ["여중 B1", "여중 B2", "여중 B3"], matchesType: "3teams" }
+                ]
+            }
+        };
+
+        let currentCategory = 'elem_m';
+        let appState = {};
+
+        // Shared real-time state. All visitors to the published tournament page use the same topic.
+        // A long opaque suffix keeps accidental cross-talk with other public-broker users unlikely.
+        const APP_VERSION = '5.0.0';
+        const DATA_SCHEMA_VERSION = 5;
+        const LOCAL_STORAGE_KEY = 'soccer_tournament_realtime_v5';
+        const LEGACY_STORAGE_KEYS = ['soccer_tournament_realtime_v4', 'soccer_tournament_v2'];
+        const REALTIME_BROKER = 'wss://broker.emqx.io:8084/mqtt';
+        const REALTIME_TOPIC = 'jeju-school-soccer/kickoff-namcho-league-1103/9f8c1e7b4a6d43a1b8e2/state';
+        const CLIENT_ID = 'kickoff_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-5);
+        let syncClient = null;
+        let syncConnected = false;
+        let syncReady = false;
+        let receivedRetainedState = false;
+        let dirtyWhileOffline = false;
+        let stateUpdatedAt = 0;
+        let applyingRemoteState = false;
+
+        function initApp() {
+            loadLocalState();
+            migrateStateShape(window.__loadedSchemaVersion || 0);
+            switchCategory(currentCategory);
+            connectRealtime();
+        }
+
+        function loadLocalState() {
+            const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+            const legacy = LEGACY_STORAGE_KEYS.map(key => localStorage.getItem(key)).find(Boolean);
+            const raw = saved || legacy;
+            if (!raw) {
+                buildDefaultState(false);
+                return;
+            }
+
+            try {
+                const parsed = JSON.parse(raw);
+                if (parsed && parsed.state && typeof parsed.state === 'object') {
+                    appState = parsed.state;
+                    stateUpdatedAt = Number(parsed.updatedAt) || 0;
+                    window.__loadedSchemaVersion = Number(parsed.schemaVersion) || 0;
+                } else {
+                    appState = parsed;
+                    stateUpdatedAt = 0;
+                    window.__loadedSchemaVersion = 0;
+                }
+            } catch (e) {
+                console.error('Failed to load saved state', e);
+                buildDefaultState(false);
+            }
+        }
+
+        function migrateStateShape(fromSchemaVersion = 0) {
+            const touchMatch = (m) => {
+                if (!m) return;
+                if (typeof m.matchDate !== 'string') m.matchDate = '';
+                if (typeof m.matchTime !== 'string') m.matchTime = '';
+                if (typeof m.completed !== 'boolean') m.completed = (m.scoreA !== null && m.scoreB !== null);
+            };
+
+            (appState.elem_m?.matches || []).forEach(touchMatch);
+            touchMatch(appState.elem_w?.finalMatch);
+            ['mid_m', 'mid_w'].forEach(cat => {
+                (appState[cat]?.groups || []).forEach(g => (g.matches || []).forEach(touchMatch));
+                Object.values(appState[cat]?.knockout || {}).forEach(touchMatch);
+            });
+            // Schema migrations are intentionally additive: never recreate fixtures here.
+            // This preserves team names, scores, dates and times across upgrades.
+            window.__loadedSchemaVersion = DATA_SCHEMA_VERSION;
+            persistLocalState();
+        }
+
+        function setSyncStatus(mode, text) {
+            const dot = document.getElementById('syncDot');
+            const label = document.getElementById('syncText');
+            if (!dot || !label) return;
+            dot.className = 'w-2 h-2 rounded-full ' + (mode === 'online' ? 'bg-lime-300' : mode === 'error' ? 'bg-rose-300' : 'bg-amber-300');
+            label.textContent = text;
+        }
+
+        function connectRealtime() {
+            if (!window.mqtt || typeof window.mqtt.connect !== 'function') {
+                setSyncStatus('error', '실시간 서버 불러오기 실패');
+                return;
+            }
+
+            try {
+                syncClient = window.mqtt.connect(REALTIME_BROKER, {
+                    clientId: CLIENT_ID,
+                    clean: true,
+                    reconnectPeriod: 2000,
+                    connectTimeout: 10000,
+                    keepalive: 30
+                });
+
+                syncClient.on('connect', () => {
+                    syncConnected = true;
+                    syncReady = false;
+                    receivedRetainedState = false;
+                    setSyncStatus('waiting', '공동 기록 불러오는 중');
+                    syncClient.subscribe(REALTIME_TOPIC, { qos: 1 }, (err) => {
+                        if (err) {
+                            setSyncStatus('error', '실시간 구독 실패');
+                            return;
+                        }
+                        // If there is no retained shared state yet, seed the room with this browser's state.
+                        setTimeout(() => {
+                            if (!receivedRetainedState) {
+                                syncReady = true;
+                                if (!stateUpdatedAt) stateUpdatedAt = Date.now();
+                                publishSharedState();
+                            }
+                        }, 1000);
+                    });
+                });
+
+                syncClient.on('message', (topic, payload) => {
+                    if (topic !== REALTIME_TOPIC) return;
+                    try {
+                        const msg = JSON.parse(payload.toString());
+                        if (!msg || !msg.state || typeof msg.state !== 'object') return;
+                        receivedRetainedState = true;
+                        syncReady = true;
+
+                        const remoteUpdatedAt = Number(msg.updatedAt) || 0;
+                        const localIsNewer = dirtyWhileOffline && stateUpdatedAt > remoteUpdatedAt;
+                        if (localIsNewer) {
+                            publishSharedState();
+                        } else if (msg.writer !== CLIENT_ID && remoteUpdatedAt >= stateUpdatedAt) {
+                            applyingRemoteState = true;
+                            appState = msg.state;
+                            stateUpdatedAt = remoteUpdatedAt;
+                            migrateStateShape(Number(msg.schemaVersion) || 0);
+                            persistLocalState();
+                            applyingRemoteState = false;
+                            renderView();
+                        }
+                        dirtyWhileOffline = false;
+                        setSyncStatus('online', '실시간 공동입력 연결됨');
+                    } catch (e) {
+                        console.warn('Invalid shared state message', e);
+                    }
+                });
+
+                syncClient.on('reconnect', () => {
+                    syncConnected = false;
+                    syncReady = false;
+                    setSyncStatus('waiting', '실시간 재연결 중');
+                });
+                syncClient.on('offline', () => {
+                    syncConnected = false;
+                    setSyncStatus('waiting', '오프라인 · 자동 재연결');
+                });
+                syncClient.on('close', () => {
+                    syncConnected = false;
+                });
+                syncClient.on('error', (err) => {
+                    console.warn('Realtime sync error', err);
+                    setSyncStatus('error', '실시간 연결 오류');
+                });
+            } catch (e) {
+                console.error(e);
+                setSyncStatus('error', '실시간 연결 실패');
+            }
+        }
+
+        function persistLocalState() {
+            const stored = {
+                appVersion: APP_VERSION,
+                schemaVersion: DATA_SCHEMA_VERSION,
+                updatedAt: stateUpdatedAt,
+                state: appState
+            };
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+            // Keep v4-compatible snapshots so an older published copy can still read the latest state.
+            localStorage.setItem('soccer_tournament_realtime_v4', JSON.stringify(stored));
+            localStorage.setItem('soccer_tournament_v2', JSON.stringify(appState));
+        }
+
+        function publishSharedState() {
+            if (!syncClient || !syncConnected || !syncReady) {
+                dirtyWhileOffline = true;
+                return;
+            }
+            const envelope = JSON.stringify({
+                appVersion: APP_VERSION,
+                schemaVersion: DATA_SCHEMA_VERSION,
+                updatedAt: stateUpdatedAt || Date.now(),
+                writer: CLIENT_ID,
+                state: appState
+            });
+            syncClient.publish(REALTIME_TOPIC, envelope, { qos: 1, retain: true }, (err) => {
+                if (err) {
+                    dirtyWhileOffline = true;
+                    setSyncStatus('error', '저장 재시도 중');
+                } else {
+                    dirtyWhileOffline = false;
+                    setSyncStatus('online', '실시간 공동입력 연결됨');
+                }
+            });
+        }
+
+        function buildDefaultState(broadcast = true) {
+            appState = {};
+
+            // 1. Male Elementary (3 teams single league)
+            appState.elem_m = {
+                teams: [...categoryConfigs.elem_m.teams],
+                matches: generateGroupFixtures(categoryConfigs.elem_m.teams, 'elem_m')
+            };
+
+            // 2. Female Elementary (2 teams single final match)
+            appState.elem_w = {
+                teams: [...categoryConfigs.elem_w.teams],
+                finalMatch: {
+                    id: 'elem_w_final',
+                    teamA: categoryConfigs.elem_w.teams[0],
+                    teamB: categoryConfigs.elem_w.teams[1],
+                    scoreA: null,
+                    scoreB: null,
+                    matchDate: '',
+                    matchTime: '',
+                    completed: false
+                }
+            };
+
+            // 3. Male Middle School (14 teams: A:4, B:4, C:3, D:3)
+            appState.mid_m = {
+                groups: categoryConfigs.mid_m.groups.map((g, idx) => ({
+                    id: `mid_m_g_${idx}`,
+                    name: g.name,
+                    teams: [...g.teams],
+                    matches: generateGroupFixtures(g.teams, `mid_m_g_${idx}`)
+                })),
+                knockout: {
+                    semi1: { id: 'mid_m_semi1', name: '준결승 1경기 (A조 1위 vs B조 1위)', teamA: 'A조 1위', teamB: 'B조 1위', scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false },
+                    semi2: { id: 'mid_m_semi2', name: '준결승 2경기 (C조 1위 vs D조 1위)', teamA: 'C조 1위', teamB: 'D조 1위', scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false },
+                    final: { id: 'mid_m_final', name: '남중부 결승전', teamA: '준결승 1 승자', teamB: '준결승 2 승자', scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false }
+                }
+            };
+
+            // 4. Female Middle School (7 teams: A:4, B:3)
+            appState.mid_w = {
+                groups: categoryConfigs.mid_w.groups.map((g, idx) => ({
+                    id: `mid_w_g_${idx}`,
+                    name: g.name,
+                    teams: [...g.teams],
+                    matches: generateGroupFixtures(g.teams, `mid_w_g_${idx}`)
+                })),
+                knockout: {
+                    final: { id: 'mid_w_final', name: '여중부 결승전 (A조 1위 vs B조 1위)', teamA: 'A조 1위', teamB: 'B조 1위', scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false }
+                }
+            };
+
+            saveAppState(broadcast);
+        }
+
+        // Generate Fixtures:
+        // 4 teams -> 4 matches: (Team 1 vs Team 2), (Team 3 vs Team 4), (Team 1 vs Team 3), (Team 2 vs Team 4)
+        // 3 teams -> 3 matches: (Team 1 vs Team 2), (Team 2 vs Team 3), (Team 3 vs Team 1)
+        function generateGroupFixtures(teams, prefix = 'm') {
+            const matches = [];
+            const n = teams.length;
+
+            if (n === 4) {
+                matches.push(
+                    { id: `${prefix}_1`, round: 1, teamA: teams[0], teamB: teams[1], scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false },
+                    { id: `${prefix}_2`, round: 1, teamA: teams[2], teamB: teams[3], scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false },
+                    { id: `${prefix}_3`, round: 2, teamA: teams[0], teamB: teams[2], scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false },
+                    { id: `${prefix}_4`, round: 2, teamA: teams[1], teamB: teams[3], scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false }
+                );
+            } else if (n === 3) {
+                matches.push(
+                    { id: `${prefix}_1`, round: 1, teamA: teams[0], teamB: teams[1], scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false },
+                    { id: `${prefix}_2`, round: 2, teamA: teams[1], teamB: teams[2], scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false },
+                    { id: `${prefix}_3`, round: 3, teamA: teams[2], teamB: teams[0], scoreA: null, scoreB: null, matchDate: '', matchTime: '', completed: false }
+                );
+            }
+            return matches;
+        }
+
+        function saveAppState(broadcast = true) {
+            if (!applyingRemoteState) stateUpdatedAt = Date.now();
+            persistLocalState();
+            if (broadcast && !applyingRemoteState) publishSharedState();
+        }
+
+        function switchCategory(catKey) {
+            currentCategory = catKey;
+
+            document.querySelectorAll('.category-tab').forEach(tab => {
+                tab.classList.remove('bg-emerald-700', 'font-bold', 'shadow-inner', 'text-white');
+                tab.classList.add('text-emerald-100');
+            });
+            const activeTab = document.getElementById(`tab-${catKey}`);
+            if (activeTab) {
+                activeTab.classList.add('bg-emerald-700', 'font-bold', 'shadow-inner', 'text-white');
+                activeTab.classList.remove('text-emerald-100');
+            }
+
+            const cfg = categoryConfigs[catKey];
+            document.getElementById('categoryBadge').className = `inline-block px-3 py-0.5 rounded-full text-xs font-bold ${cfg.badgeColor}`;
+            document.getElementById('categoryBadge').innerText = cfg.badge;
+            document.getElementById('categoryTitle').innerText = `${cfg.name} 대진 및 순위`;
+
+            if (catKey === 'elem_m') {
+                document.getElementById('categoryRuleNotice').innerText = "풀리그 방식 (3팀 3경기)";
+                document.getElementById('categoryDesc').innerText = "3팀 풀리그 ➔ 실시간 순위 산출";
+            } else if (catKey === 'elem_w') {
+                document.getElementById('categoryRuleNotice').innerText = "단판 결승전";
+                document.getElementById('categoryDesc').innerText = "2팀 맞대결 단판 결승";
+            } else if (catKey === 'mid_m') {
+                document.getElementById('categoryRuleNotice').innerText = "4개 조 리그 + 4강 토너먼트";
+                document.getElementById('categoryDesc').innerText = "A,B조(각4팀 4경기) / C,D조(각3팀 3경기) ➔ 조 1위 4강 진출";
+            } else if (catKey === 'mid_w') {
+                document.getElementById('categoryRuleNotice').innerText = "2개 조 리그 + 결승전";
+                document.getElementById('categoryDesc').innerText = "A조(4팀 4경기) / B조(3팀 3경기) ➔ 각 조 1위 결승 진출";
+            }
+
+            renderView();
+        }
+
+        // Calculate League Standings with official tiebreakers
+        // 1. Points, 2. Goal Difference, 3. Goals For, 4. Head-to-Head
+        function calculateStandings(teams, matches) {
+            const stats = {};
+            teams.forEach(team => {
+                stats[team] = {
+                    team: team,
+                    played: 0,
+                    won: 0,
+                    drawn: 0,
+                    lost: 0,
+                    gf: 0,
+                    ga: 0,
+                    gd: 0,
+                    points: 0
+                };
+            });
+
+            matches.forEach(m => {
+                if (m.completed && m.scoreA !== null && m.scoreB !== null) {
+                    const sa = parseInt(m.scoreA);
+                    const sb = parseInt(m.scoreB);
+                    const tA = m.teamA;
+                    const tB = m.teamB;
+
+                    if (stats[tA] && stats[tB]) {
+                        stats[tA].played++;
+                        stats[tB].played++;
+                        stats[tA].gf += sa;
+                        stats[tA].ga += sb;
+                        stats[tB].gf += sb;
+                        stats[tB].ga += sa;
+
+                        if (sa > sb) {
+                            stats[tA].won++;
+                            stats[tA].points += 3;
+                            stats[tB].lost++;
+                        } else if (sb > sa) {
+                            stats[tB].won++;
+                            stats[tB].points += 3;
+                            stats[tA].lost++;
+                        } else {
+                            stats[tA].drawn++;
+                            stats[tA].points += 1;
+                            stats[tB].drawn++;
+                            stats[tB].points += 1;
+                        }
+                    }
+                }
+            });
+
+            Object.keys(stats).forEach(t => {
+                stats[t].gd = stats[t].gf - stats[t].ga;
+            });
+
+            const standings = Object.values(stats);
+
+            standings.sort((a, b) => {
+                if (b.points !== a.points) return b.points - a.points;
+                if (b.gd !== a.gd) return b.gd - a.gd;
+                if (b.gf !== a.gf) return b.gf - a.gf;
+
+                // Head to head check
+                const h2h = matches.find(m => 
+                    m.completed && 
+                    ((m.teamA === a.team && m.teamB === b.team) || (m.teamA === b.team && m.teamB === a.team))
+                );
+                if (h2h && h2h.scoreA !== null && h2h.scoreB !== null) {
+                    if (h2h.teamA === a.team && h2h.scoreA > h2h.scoreB) return -1;
+                    if (h2h.teamA === a.team && h2h.scoreB > h2h.scoreA) return 1;
+                    if (h2h.teamB === a.team && h2h.scoreB > h2h.scoreA) return -1;
+                    if (h2h.teamB === a.team && h2h.scoreA > h2h.scoreB) return 1;
+                }
+                return 0;
+            });
+
+            return standings;
+        }
+
+        // Render Page View based on Active Category
+        function renderView() {
+            const container = document.getElementById('mainViewContainer');
+            container.innerHTML = '';
+
+            const cfg = categoryConfigs[currentCategory];
+
+            if (cfg.type === 'single_league') {
+                const standings = calculateStandings(appState.elem_m.teams, appState.elem_m.matches);
+                container.innerHTML = `
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        <div class="lg:col-span-7">
+                            ${renderStandingsTable(standings, "남초부 순위표")}
+                        </div>
+                        <div class="lg:col-span-5">
+                            ${renderMatchList(appState.elem_m.matches, "경기 일정 및 결과")}
+                        </div>
+                    </div>
+                `;
+            } else if (cfg.type === 'final_only') {
+                container.innerHTML = renderFinalOnlyView(appState.elem_w.finalMatch);
+            } else if (cfg.type === 'groups_with_semis') {
+                updateKnockoutTeams('mid_m');
+                let html = `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">`;
+                appState.mid_m.groups.forEach(g => {
+                    const standings = calculateStandings(g.teams, g.matches);
+                    html += `
+                        <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col justify-between">
+                            <div>
+                                <div class="bg-slate-800 text-white px-4 py-3 flex justify-between items-center">
+                                    <h3 class="font-bold flex items-center gap-2 text-sm sm:text-base">
+                                        <i class="fa-solid fa-layer-group text-amber-400"></i> ${g.name} (${g.teams.length}개팀 · 총 ${g.matches.length}경기)
+                                    </h3>
+                                    <span class="text-xs bg-emerald-600 text-white font-bold px-2 py-0.5 rounded">1위 4강진출</span>
+                                </div>
+                                <div class="p-4 space-y-4">
+                                    ${renderStandingsTable(standings, null, true)}
+                                    <div class="border-t border-slate-100 pt-3">
+                                        <h4 class="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1">
+                                            <i class="fa-regular fa-calendar-check"></i> 경기 결과 입력
+                                        </h4>
+                                        ${renderMatchList(g.matches, null, true)}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += `</div>`;
+                html += renderKnockoutSection('mid_m');
+                container.innerHTML = html;
+            } else if (cfg.type === 'groups_with_final') {
+                updateKnockoutTeams('mid_w');
+                let html = `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">`;
+                appState.mid_w.groups.forEach(g => {
+                    const standings = calculateStandings(g.teams, g.matches);
+                    html += `
+                        <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col justify-between">
+                            <div>
+                                <div class="bg-slate-800 text-white px-4 py-3 flex justify-between items-center">
+                                    <h3 class="font-bold flex items-center gap-2 text-sm sm:text-base">
+                                        <i class="fa-solid fa-layer-group text-pink-400"></i> ${g.name} (${g.teams.length}개팀 · 총 ${g.matches.length}경기)
+                                    </h3>
+                                    <span class="text-xs bg-pink-600 text-white font-bold px-2 py-0.5 rounded">1위 결승진출</span>
+                                </div>
+                                <div class="p-4 space-y-4">
+                                    ${renderStandingsTable(standings, null, true)}
+                                    <div class="border-t border-slate-100 pt-3">
+                                        <h4 class="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1">
+                                            <i class="fa-regular fa-calendar-check"></i> 경기 결과 입력
+                                        </h4>
+                                        ${renderMatchList(g.matches, null, true)}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += `</div>`;
+                html += renderKnockoutSection('mid_w');
+                container.innerHTML = html;
+            }
+        }
+
+        // Update knockout qualified teams from group standings
+        function updateKnockoutTeams(catKey) {
+            if (catKey === 'mid_m') {
+                const gA = calculateStandings(appState.mid_m.groups[0].teams, appState.mid_m.groups[0].matches);
+                const gB = calculateStandings(appState.mid_m.groups[1].teams, appState.mid_m.groups[1].matches);
+                const gC = calculateStandings(appState.mid_m.groups[2].teams, appState.mid_m.groups[2].matches);
+                const gD = calculateStandings(appState.mid_m.groups[3].teams, appState.mid_m.groups[3].matches);
+
+                appState.mid_m.knockout.semi1.teamA = `${gA[0].team} (A 1위)`;
+                appState.mid_m.knockout.semi1.teamB = `${gB[0].team} (B 1위)`;
+                appState.mid_m.knockout.semi2.teamA = `${gC[0].team} (C 1위)`;
+                appState.mid_m.knockout.semi2.teamB = `${gD[0].team} (D 1위)`;
+
+                // Update finalists if semis completed
+                const s1 = appState.mid_m.knockout.semi1;
+                const s2 = appState.mid_m.knockout.semi2;
+
+                if (s1.completed && s1.scoreA !== null && s1.scoreB !== null) {
+                    appState.mid_m.knockout.final.teamA = parseInt(s1.scoreA) > parseInt(s1.scoreB) ? s1.teamA : s1.teamB;
+                }
+                if (s2.completed && s2.scoreA !== null && s2.scoreB !== null) {
+                    appState.mid_m.knockout.final.teamB = parseInt(s2.scoreA) > parseInt(s2.scoreB) ? s2.teamA : s2.teamB;
+                }
+
+            } else if (catKey === 'mid_w') {
+                const gA = calculateStandings(appState.mid_w.groups[0].teams, appState.mid_w.groups[0].matches);
+                const gB = calculateStandings(appState.mid_w.groups[1].teams, appState.mid_w.groups[1].matches);
+
+                appState.mid_w.knockout.final.teamA = `${gA[0].team} (A 1위)`;
+                appState.mid_w.knockout.final.teamB = `${gB[0].team} (B 1위)`;
+            }
+        }
+
+        // Render UI: Standings Table
+        function renderStandingsTable(standings, title = null, compact = false) {
+            let html = '';
+            if (title) {
+                html += `
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden mb-6">
+                        <div class="bg-slate-800 text-white px-5 py-3.5 flex justify-between items-center">
+                            <h3 class="font-bold flex items-center gap-2">
+                                <i class="fa-solid fa-list-ol text-emerald-400"></i> ${title}
+                            </h3>
+                            <span class="text-xs text-slate-300">자동 실시간 랭킹</span>
+                        </div>
+                        <div class="p-2">
+                `;
+            }
+
+            html += `
+                <div class="table-container overflow-x-auto">
+                    <table class="w-full text-center text-xs sm:text-sm">
+                        <thead>
+                            <tr class="bg-slate-100/80 text-slate-600 border-b border-slate-200 font-semibold">
+                                <th class="py-2.5 px-2 text-center w-12">순위</th>
+                                <th class="py-2.5 px-3 text-left">팀명</th>
+                                <th class="py-2.5 px-2">경기</th>
+                                <th class="py-2.5 px-2">승</th>
+                                <th class="py-2.5 px-2">무</th>
+                                <th class="py-2.5 px-2">패</th>
+                                <th class="py-2.5 px-2">득</th>
+                                <th class="py-2.5 px-2">실</th>
+                                <th class="py-2.5 px-2">득실</th>
+                                <th class="py-2.5 px-2 bg-emerald-50 text-emerald-800 font-bold">승점</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+            `;
+
+            standings.forEach((row, idx) => {
+                let rankBadge = `<span class="font-bold text-slate-600">${idx + 1}</span>`;
+                if (idx === 0) rankBadge = `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-400 text-amber-950 font-extrabold text-xs shadow-sm">1</span>`;
+                else if (idx === 1) rankBadge = `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-slate-800 font-bold text-xs">2</span>`;
+                else if (idx === 2) rankBadge = `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-700/30 text-amber-900 font-bold text-xs">3</span>`;
+
+                const gdText = row.gd > 0 ? `+${row.gd}` : row.gd;
+
+                html += `
+                    <tr class="${idx === 0 ? 'bg-emerald-50/40 font-medium' : 'hover:bg-slate-50'} transition">
+                        <td class="py-2.5 px-2">${rankBadge}</td>
+                        <td class="py-2.5 px-3 text-left font-bold text-slate-800">${row.team}</td>
+                        <td class="py-2.5 px-2 text-slate-600">${row.played}</td>
+                        <td class="py-2.5 px-2 text-blue-600 font-semibold">${row.won}</td>
+                        <td class="py-2.5 px-2 text-slate-500">${row.drawn}</td>
+                        <td class="py-2.5 px-2 text-rose-500">${row.lost}</td>
+                        <td class="py-2.5 px-2 text-slate-600">${row.gf}</td>
+                        <td class="py-2.5 px-2 text-slate-600">${row.ga}</td>
+                        <td class="py-2.5 px-2 font-semibold ${row.gd > 0 ? 'text-blue-600' : row.gd < 0 ? 'text-rose-600' : 'text-slate-500'}">${gdText}</td>
+                        <td class="py-2.5 px-2 bg-emerald-50/80 text-emerald-700 font-extrabold text-base">${row.points}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            if (title) {
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+
+            return html;
+        }
+
+        // Render UI: Match List with direct inputs
+        function renderMatchList(matches, title = null, compact = false) {
+            let html = '';
+            if (title) {
+                html += `
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden mb-6">
+                        <div class="bg-slate-800 text-white px-5 py-3.5 flex justify-between items-center">
+                            <h3 class="font-bold flex items-center gap-2">
+                                <i class="fa-regular fa-calendar-check text-emerald-400"></i> ${title}
+                            </h3>
+                            <span class="text-xs text-slate-300">날짜 · 시간 · 점수 입력 후 자동 저장</span>
+                        </div>
+                        <div class="p-4 space-y-3">
+                `;
+            } else {
+                html += `<div class="space-y-2.5">`;
+            }
+
+            matches.forEach((m, idx) => {
+                const valA = m.scoreA !== null ? m.scoreA : '';
+                const valB = m.scoreB !== null ? m.scoreB : '';
+                const matchDate = m.matchDate || '';
+                const matchTime = m.matchTime || '';
+
+                html += `
+                    <div class="bg-slate-50 rounded-xl p-3 border border-slate-200/70 hover:border-slate-300 transition space-y-3">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <label class="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                <span class="w-16 shrink-0"><i class="fa-regular fa-calendar mr-1 text-emerald-600"></i>날짜</span>
+                                <input type="date" value="${matchDate}"
+                                    onchange="updateMatchSchedule('${m.id}', 'date', this.value)"
+                                    class="min-w-0 flex-1 px-2.5 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            </label>
+                            <label class="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                <span class="w-16 shrink-0"><i class="fa-regular fa-clock mr-1 text-emerald-600"></i>시간</span>
+                                <input type="time" value="${matchTime}"
+                                    onchange="updateMatchSchedule('${m.id}', 'time', this.value)"
+                                    class="min-w-0 flex-1 px-2.5 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            </label>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="min-w-0 flex-1 text-right">
+                                <div class="text-[10px] font-extrabold tracking-wider text-blue-600 mb-0.5">HOME</div>
+                                <div class="font-bold text-xs sm:text-sm text-slate-800 truncate">${m.teamA}</div>
+                            </div>
+                            <div class="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-inner shrink-0">
+                                <input type="number" min="0" max="99" value="${valA}"
+                                    onchange="updateMatchScore('${m.id}', this.value, true)"
+                                    placeholder="-"
+                                    aria-label="${m.teamA} HOME 점수"
+                                    class="w-8 sm:w-10 text-center text-sm font-bold bg-transparent text-emerald-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded">
+                                <span class="text-slate-400 font-bold text-xs">:</span>
+                                <input type="number" min="0" max="99" value="${valB}"
+                                    onchange="updateMatchScore('${m.id}', this.value, false)"
+                                    placeholder="-"
+                                    aria-label="${m.teamB} AWAY 점수"
+                                    class="w-8 sm:w-10 text-center text-sm font-bold bg-transparent text-emerald-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded">
+                            </div>
+                            <div class="min-w-0 flex-1 text-left">
+                                <div class="text-[10px] font-extrabold tracking-wider text-rose-600 mb-0.5">AWAY</div>
+                                <div class="font-bold text-xs sm:text-sm text-slate-800 truncate">${m.teamB}</div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-end">
+                            ${m.completed ? `
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-700">
+                                    <i class="fa-solid fa-check text-[10px]"></i> 종료
+                                </span>
+                            ` : `
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-200 text-slate-600">
+                                    예정
+                                </span>
+                            `}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `</div>`;
+            if (title) html += `</div>`;
+
+            return html;
+        }
+
+        // Render Single Final View for Female Elementary
+        function renderFinalOnlyView(match) {
+            const valA = match.scoreA !== null ? match.scoreA : '';
+            const valB = match.scoreB !== null ? match.scoreB : '';
+
+            let champion = null;
+            if (match.completed && match.scoreA !== null && match.scoreB !== null) {
+                const sa = parseInt(match.scoreA);
+                const sb = parseInt(match.scoreB);
+                if (sa > sb) champion = match.teamA;
+                else if (sb > sa) champion = match.teamB;
+                else champion = "무승부 (승부차기 필요)";
+            }
+
+            return `
+                <div class="max-w-2xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
+                    <div class="bg-gradient-to-r from-pink-600 to-rose-600 text-white p-6 text-center">
+                        <span class="inline-block px-3 py-1 bg-white/20 rounded-full text-xs font-bold mb-2 backdrop-blur">단판 결승전</span>
+                        <h3 class="text-2xl font-extrabold">여자 초등부 우승 결정전</h3>
+                        <p class="text-xs text-pink-100 mt-1">경기가 종료되면 우승팀이 즉시 확정됩니다.</p>
+                    </div>
+
+                    <div class="p-8">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-6">
+                            <label class="text-xs font-semibold text-slate-600">경기 날짜
+                                <input type="date" value="${match.matchDate || ''}" onchange="updateMatchSchedule('${match.id}', 'date', this.value)" class="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                            </label>
+                            <label class="text-xs font-semibold text-slate-600">경기 시간
+                                <input type="time" value="${match.matchTime || ''}" onchange="updateMatchSchedule('${match.id}', 'time', this.value)" class="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                            </label>
+                        </div>
+                        <div class="flex items-center justify-around gap-4">
+                            <!-- Team A -->
+                            <div class="text-center flex-1">
+                                <div class="w-16 h-16 sm:w-20 sm:h-20 bg-pink-100 rounded-2xl mx-auto flex items-center justify-center text-pink-600 font-extrabold text-2xl shadow-inner mb-3 border border-pink-200">
+                                    ${match.teamA.charAt(0)}
+                                </div>
+                                <div class="text-[11px] font-extrabold text-blue-600 mb-1">HOME</div>
+                                <h4 class="font-extrabold text-lg text-slate-800">${match.teamA}</h4>
+                            </div>
+
+                            <!-- Score Inputs -->
+                            <div class="flex items-center gap-3">
+                                <input type="number" min="0" max="99" value="${valA}" 
+                                    onchange="updateKnockoutScore('elem_w', 'finalMatch', this.value, true)"
+                                    placeholder="0"
+                                    class="w-14 h-14 sm:w-16 sm:h-16 text-center text-2xl font-extrabold bg-slate-50 border-2 border-slate-300 rounded-2xl focus:border-pink-500 focus:bg-white focus:outline-none transition shadow-inner">
+                                <span class="text-2xl font-black text-slate-400">:</span>
+                                <input type="number" min="0" max="99" value="${valB}" 
+                                    onchange="updateKnockoutScore('elem_w', 'finalMatch', this.value, false)"
+                                    placeholder="0"
+                                    class="w-14 h-14 sm:w-16 sm:h-16 text-center text-2xl font-extrabold bg-slate-50 border-2 border-slate-300 rounded-2xl focus:border-pink-500 focus:bg-white focus:outline-none transition shadow-inner">
+                            </div>
+
+                            <!-- Team B -->
+                            <div class="text-center flex-1">
+                                <div class="w-16 h-16 sm:w-20 sm:h-20 bg-rose-100 rounded-2xl mx-auto flex items-center justify-center text-rose-600 font-extrabold text-2xl shadow-inner mb-3 border border-rose-200">
+                                    ${match.teamB.charAt(0)}
+                                </div>
+                                <div class="text-[11px] font-extrabold text-rose-600 mb-1">AWAY</div>
+                                <h4 class="font-extrabold text-lg text-slate-800">${match.teamB}</h4>
+                            </div>
+                        </div>
+
+                        ${champion ? `
+                            <div class="mt-8 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-center animate-bounce">
+                                <i class="fa-solid fa-trophy text-amber-500 text-3xl mb-1"></i>
+                                <div class="text-xs font-bold text-amber-800 uppercase tracking-wider">CHAMPION</div>
+                                <div class="text-xl font-black text-amber-950 mt-0.5">${champion}</div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render Tournament Knockout Section (Semis / Final)
+        function renderKnockoutSection(catKey) {
+            const ko = appState[catKey].knockout;
+            const isMidM = catKey === 'mid_m';
+
+            let html = `
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
+                    <div class="bg-slate-800 text-white px-5 py-4">
+                        <h3 class="font-bold flex items-center gap-2 text-base">
+                            <i class="fa-solid fa-sitemap text-amber-400"></i> ${isMidM ? '본선 토너먼트 (준결승 & 결승)' : '최종 결승전'}
+                        </h3>
+                        <p class="text-xs text-slate-300 mt-0.5">조별 리그 1위 팀이 자동으로 토너먼트 대진표에 배치됩니다.</p>
+                    </div>
+                    <div class="p-6">
+            `;
+
+            if (isMidM) {
+                html += `
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                        ${renderKnockoutCard(catKey, 'semi1', ko.semi1)}
+                        ${renderKnockoutCard(catKey, 'semi2', ko.semi2)}
+                    </div>
+                    <div class="border-t border-slate-200 pt-6 max-w-xl mx-auto">
+                        <h4 class="text-center font-extrabold text-slate-700 text-base mb-4 flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-trophy text-amber-500"></i> 남중부 결승전
+                        </h4>
+                        ${renderKnockoutCard(catKey, 'final', ko.final, true)}
+                    </div>
+                `;
+            } else {
+                html += `
+                    <div class="max-w-xl mx-auto py-2">
+                        ${renderKnockoutCard(catKey, 'final', ko.final, true)}
+                    </div>
+                `;
+            }
+
+            html += `
+                    </div>
+                </div>
+            `;
+
+            return html;
+        }
+
+        // Single Knockout Match Card Template
+        function renderKnockoutCard(catKey, matchKey, match, isFinal = false) {
+            const valA = match.scoreA !== null ? match.scoreA : '';
+            const valB = match.scoreB !== null ? match.scoreB : '';
+
+            let winner = null;
+            if (match.completed && match.scoreA !== null && match.scoreB !== null) {
+                const sa = parseInt(match.scoreA);
+                const sb = parseInt(match.scoreB);
+                if (sa > sb) winner = match.teamA;
+                else if (sb > sa) winner = match.teamB;
+                else winner = "승부차기 필요";
+            }
+
+            return `
+                <div class="bg-slate-50 rounded-xl p-4 border ${isFinal ? 'border-amber-300 bg-amber-50/30' : 'border-slate-200'} shadow-sm">
+                    <div class="text-xs font-bold ${isFinal ? 'text-amber-800' : 'text-slate-500'} mb-3 text-center">
+                        ${match.name}
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                        <input type="date" value="${match.matchDate || ''}" onchange="updateMatchSchedule('${match.id}', 'date', this.value)" class="w-full px-2.5 py-2 text-xs bg-white border border-slate-300 rounded-lg">
+                        <input type="time" value="${match.matchTime || ''}" onchange="updateMatchSchedule('${match.id}', 'time', this.value)" class="w-full px-2.5 py-2 text-xs bg-white border border-slate-300 rounded-lg">
+                    </div>
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="flex-1 text-right min-w-0"><div class="text-[10px] font-extrabold text-blue-600">HOME</div><span class="font-extrabold text-sm text-slate-800 block truncate">${match.teamA}</span></div>
+                        <div class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-300 shadow-inner">
+                            <input type="number" min="0" max="99" value="${valA}" 
+                                onchange="updateKnockoutScore('${catKey}', '${matchKey}', this.value, true)"
+                                placeholder="0" 
+                                class="w-9 text-center font-extrabold text-base bg-transparent text-emerald-700 focus:outline-none">
+                            <span class="text-slate-400 font-bold text-xs">:</span>
+                            <input type="number" min="0" max="99" value="${valB}" 
+                                onchange="updateKnockoutScore('${catKey}', '${matchKey}', this.value, false)"
+                                placeholder="0" 
+                                class="w-9 text-center font-extrabold text-base bg-transparent text-emerald-700 focus:outline-none">
+                        </div>
+                        <div class="flex-1 text-left min-w-0"><div class="text-[10px] font-extrabold text-rose-600">AWAY</div><span class="font-extrabold text-sm text-slate-800 block truncate">${match.teamB}</span></div>
+                    </div>
+                    ${winner ? `
+                        <div class="mt-3 text-center text-xs font-bold ${isFinal ? 'text-amber-900 bg-amber-200/60' : 'text-emerald-800 bg-emerald-100'} py-1 px-2 rounded-lg">
+                            ${isFinal ? '🏆 최종 우승: ' : '승자 진출: '} ${winner}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        // Handler: Update match schedule (date / time)
+        function updateMatchSchedule(matchId, field, value) {
+            let target = null;
+
+            if (currentCategory === 'elem_m') {
+                target = appState.elem_m.matches.find(m => m.id === matchId);
+            } else if (currentCategory === 'elem_w') {
+                target = appState.elem_w.finalMatch;
+            } else if (currentCategory === 'mid_m' || currentCategory === 'mid_w') {
+                appState[currentCategory].groups.forEach(g => {
+                    const found = g.matches.find(m => m.id === matchId);
+                    if (found) target = found;
+                });
+                if (!target) {
+                    const ko = appState[currentCategory].knockout;
+                    target = Object.values(ko).find(m => m.id === matchId) || null;
+                }
+            }
+
+            if (!target) return;
+            if (field === 'date') target.matchDate = value;
+            if (field === 'time') target.matchTime = value;
+            saveAppState();
+            showToast("경기 일정이 저장되었습니다.");
+        }
+
+        // Handler: Update group league score
+        function updateMatchScore(matchId, value, isTeamA) {
+            const scoreVal = value.trim() === '' ? null : parseInt(value);
+
+            if (currentCategory === 'elem_m') {
+                const match = appState.elem_m.matches.find(m => m.id === matchId);
+                if (match) {
+                    if (isTeamA) match.scoreA = scoreVal;
+                    else match.scoreB = scoreVal;
+                    match.completed = (match.scoreA !== null && match.scoreB !== null);
+                }
+            } else if (currentCategory === 'mid_m' || currentCategory === 'mid_w') {
+                appState[currentCategory].groups.forEach(g => {
+                    const match = g.matches.find(m => m.id === matchId);
+                    if (match) {
+                        if (isTeamA) match.scoreA = scoreVal;
+                        else match.scoreB = scoreVal;
+                        match.completed = (match.scoreA !== null && match.scoreB !== null);
+                    }
+                });
+            }
+
+            saveAppState();
+            renderView();
+            showToast("경기 결과가 저장되었습니다.");
+        }
+
+        // Handler: Update knockout match score
+        function updateKnockoutScore(catKey, matchKey, value, isTeamA) {
+            const scoreVal = value.trim() === '' ? null : parseInt(value);
+
+            if (catKey === 'elem_w') {
+                const m = appState.elem_w.finalMatch;
+                if (isTeamA) m.scoreA = scoreVal;
+                else m.scoreB = scoreVal;
+                m.completed = (m.scoreA !== null && m.scoreB !== null);
+            } else {
+                const m = appState[catKey].knockout[matchKey];
+                if (m) {
+                    if (isTeamA) m.scoreA = scoreVal;
+                    else m.scoreB = scoreVal;
+                    m.completed = (m.scoreA !== null && m.scoreB !== null);
+                }
+            }
+
+            saveAppState();
+            renderView();
+            showToast("토너먼트 결과가 업데이트되었습니다.");
+        }
+
+        // Modal Handler: Open Modal to Rename Teams
+        function openTeamModal() {
+            const container = document.getElementById('teamInputsContainer');
+            container.innerHTML = '';
+            const cfg = categoryConfigs[currentCategory];
+
+            if (cfg.type === 'single_league' || cfg.type === 'final_only') {
+                const currentTeams = appState[currentCategory].teams;
+                let html = `<h4 class="font-bold text-sm text-slate-700 border-b pb-2 mb-3">팀 이름 변경</h4>`;
+                currentTeams.forEach((team, idx) => {
+                    html += `
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs font-bold text-slate-500 w-12">팀 ${idx + 1}</span>
+                            <input type="text" value="${team}" data-team-index="${idx}" 
+                                class="team-name-input flex-1 px-3 py-2 border border-slate-300 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            } else {
+                let html = '';
+                appState[currentCategory].groups.forEach((g, gIdx) => {
+                    html += `<h4 class="font-bold text-sm text-slate-700 border-b pb-1 mt-4 mb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-users text-emerald-600"></i> ${g.name} 팀 구성
+                    </h4>`;
+                    g.teams.forEach((team, tIdx) => {
+                        html += `
+                            <div class="flex items-center gap-3 mb-2">
+                                <span class="text-xs font-bold text-slate-500 w-16">${g.name} ${tIdx + 1}</span>
+                                <input type="text" value="${team}" data-group-index="${gIdx}" data-team-index="${tIdx}" 
+                                    class="group-team-name-input flex-1 px-3 py-2 border border-slate-300 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            </div>
+                        `;
+                    });
+                });
+                container.innerHTML = html;
+            }
+
+            document.getElementById('teamModal').classList.remove('hidden');
+        }
+
+        function closeTeamModal() {
+            document.getElementById('teamModal').classList.add('hidden');
+        }
+
+        // Save Custom Team Names and regenerate schedule with new team names
+        function saveTeamNames() {
+            const cfg = categoryConfigs[currentCategory];
+
+            if (cfg.type === 'single_league') {
+                const inputs = document.querySelectorAll('.team-name-input');
+                const oldTeams = [...appState.elem_m.teams];
+                const newTeams = [];
+                inputs.forEach(input => newTeams.push(input.value.trim() || '팀'));
+                const rename = Object.fromEntries(oldTeams.map((name, i) => [name, newTeams[i]]));
+                appState.elem_m.teams = newTeams;
+                appState.elem_m.matches.forEach(m => {
+                    m.teamA = rename[m.teamA] || m.teamA;
+                    m.teamB = rename[m.teamB] || m.teamB;
+                });
+
+            } else if (cfg.type === 'final_only') {
+                const inputs = document.querySelectorAll('.team-name-input');
+                const newTeams = [];
+                inputs.forEach(input => newTeams.push(input.value.trim() || '팀'));
+                appState.elem_w.teams = newTeams;
+                appState.elem_w.finalMatch.teamA = newTeams[0];
+                appState.elem_w.finalMatch.teamB = newTeams[1];
+
+            } else if (cfg.type === 'groups_with_semis' || cfg.type === 'groups_with_final') {
+                const inputs = document.querySelectorAll('.group-team-name-input');
+                const renameMaps = appState[currentCategory].groups.map(() => ({}));
+                inputs.forEach(input => {
+                    const gIdx = parseInt(input.getAttribute('data-group-index'));
+                    const tIdx = parseInt(input.getAttribute('data-team-index'));
+                    const group = appState[currentCategory].groups[gIdx];
+                    const oldName = group.teams[tIdx];
+                    const newName = input.value.trim() || '팀';
+                    renameMaps[gIdx][oldName] = newName;
+                    group.teams[tIdx] = newName;
+                });
+                appState[currentCategory].groups.forEach((g, idx) => {
+                    const rename = renameMaps[idx];
+                    g.matches.forEach(m => {
+                        m.teamA = rename[m.teamA] || m.teamA;
+                        m.teamB = rename[m.teamB] || m.teamB;
+                    });
+                });
+            }
+
+            saveAppState();
+            closeTeamModal();
+            renderView();
+            showToast("팀 이름 변경사항이 반영되었습니다.");
+        }
+
+        // Reset All Tournament Data to Initial Default
+        function resetData() {
+            if (confirm("모든 경기 스코어와 설정된 팀 이름이 초기화됩니다. 계속하시겠습니까?")) {
+                localStorage.removeItem(LOCAL_STORAGE_KEY);
+                LEGACY_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
+                buildDefaultState(true);
+                renderView();
+                showToast("모든 데이터가 초기화되었습니다.");
+            }
+        }
+
+        // Export Standings and Results summary text for Sharing (KakaoTalk / SMS)
+        function exportData() {
+            const cfg = categoryConfigs[currentCategory];
+            let shareText = `🏆 [실시간 대회 결과 - ${cfg.name}]\n`;
+            shareText += `----------------------------------------\n`;
+
+            if (cfg.type === 'single_league') {
+                const standings = calculateStandings(appState.elem_m.teams, appState.elem_m.matches);
+                shareText += `📊 [실시간 순위표]\n`;
+                standings.forEach((s, idx) => {
+                    shareText += `${idx + 1}위: ${s.team} | ${s.points}점 (득실 ${s.gd > 0 ? '+' : ''}${s.gd})\n`;
+                });
+            } else if (cfg.type === 'final_only') {
+                const m = appState.elem_w.finalMatch;
+                shareText += `⚽ [단판 결승전]\n`;
+                shareText += `${m.matchDate || '날짜 미정'} ${m.matchTime || '시간 미정'} | HOME ${m.teamA} ${m.scoreA !== null ? m.scoreA : '-'} : ${m.scoreB !== null ? m.scoreB : '-'} ${m.teamB} AWAY\n`;
+            } else if (cfg.type === 'groups_with_semis' || cfg.type === 'groups_with_final') {
+                appState[currentCategory].groups.forEach(g => {
+                    const standings = calculateStandings(g.teams, g.matches);
+                    shareText += `📌 [${g.name} 순위]\n`;
+                    standings.forEach((s, idx) => {
+                        shareText += `  ${idx + 1}위: ${s.team} (${s.points}점, 득실 ${s.gd > 0 ? '+' : ''}${s.gd})\n`;
+                    });
+                });
+
+                shareText += `\n🏆 [본선 결과]\n`;
+                const ko = appState[currentCategory].knockout;
+                if (ko.semi1) {
+                    shareText += `준결승1: ${ko.semi1.teamA} ${ko.semi1.scoreA ?? '-'} : ${ko.semi1.scoreB ?? '-'} ${ko.semi1.teamB}\n`;
+                    shareText += `준결승2: ${ko.semi2.teamA} ${ko.semi2.scoreA ?? '-'} : ${ko.semi2.scoreB ?? '-'} ${ko.semi2.teamB}\n`;
+                }
+                shareText += `결승전: ${ko.final.teamA} ${ko.final.scoreA ?? '-'} : ${ko.final.scoreB ?? '-'} ${ko.final.teamB}\n`;
+            }
+
+            shareText += `----------------------------------------\n▶ 실시간 대진표 웹 공유 중`;
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(shareText).then(() => {
+                    showToast("대회 결과 텍스트가 클립보드에 복사되었습니다!");
+                }).catch(() => {
+                    fallbackCopyText(shareText);
+                });
+            } else {
+                fallbackCopyText(shareText);
+            }
+        }
+
+        function fallbackCopyText(text) {
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand("copy");
+            document.body.removeChild(textarea);
+            showToast("대회 결과 텍스트가 클립보드에 복사되었습니다!");
+        }
+
+        // Show Toast Notification
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMsg').innerText = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+
+            setTimeout(() => {
+                toast.classList.remove('translate-y-0', 'opacity-100');
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+
+        // Run application on page load
+        window.onload = function() {
+            initApp();
+        };
+    </script>
+</body>
+</html>
